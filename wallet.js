@@ -170,13 +170,34 @@ async function cmdBalance(chainArg) {
   console.log('\n  Wallet Balances:');
 
   if (!chainArg || chainArg === 'usdc') {
+    console.log(`\n  USDC (Base):`);
+    console.log(`    Address: ${wallet.base?.address || 'N/A'}`);
+    
+    // Check on-chain balance (what you can actually play with)
+    if (ethers && wallet.base?.address) {
+      try {
+        const provider = new ethers.JsonRpcProvider(CONFIG.usdc?.rpc_url || 'https://mainnet.base.org');
+        const usdcContract = new ethers.Contract(
+          CONFIG.usdc?.usdc_contract || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+          ['function balanceOf(address) view returns (uint256)'],
+          provider
+        );
+        const usdcBal = await usdcContract.balanceOf(wallet.base.address);
+        const ethBal = await provider.getBalance(wallet.base.address);
+        console.log(`    USDC:    $${parseFloat(ethers.formatUnits(usdcBal, 6)).toFixed(2)} (on-chain, playable)`);
+        console.log(`    ETH:     ${parseFloat(ethers.formatEther(ethBal)).toFixed(6)}`);
+      } catch (e) {
+        console.log(`    On-chain error: ${e.message}`);
+      }
+    }
+    
+    // Also show internal arcade balance
     try {
       const result = await apiCall('usdc', '/wallet/balance');
-      console.log(`\n  USDC (Base):`);
-      console.log(`    Address: ${wallet.base?.address || 'N/A'}`);
-      console.log(`    Balance: $${result.data?.balance?.toFixed(2) || '0.00'} USDC`);
+      if (result.data?.balance > 0) {
+        console.log(`    Arcade:  $${result.data?.balance?.toFixed(2) || '0.00'} (internal)`);
+      }
     } catch (e) {
-      console.log(`    Error: ${e.message}`);
     }
   }
 
