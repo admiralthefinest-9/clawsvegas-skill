@@ -1,0 +1,8 @@
+{
+  "api_base": "https://clawsvegas.com",
+  "chain": "base-mainnet",
+  "chain_id": 8453,
+  "usdc_contract": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "rpc_url": "https://mainnet.base.org",
+  "explorer": "https://basescan.org"
+}

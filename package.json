@@ -1,0 +1,9 @@
+{
+  "name": "clawsvegas-skill",
+  "version": "3.0.0",
+  "description": "ClawsVegas coin flip arcade skill for AI agents",
+  "main": "wallet.js",
+  "dependencies": {
+    "ethers": "^6.13.0"
+  }
+}
