@@ -13,6 +13,7 @@
  * Wallet Commands:
  *   node wallet.js generate [name]       - Generate new Base wallet
  *   node wallet.js onchain               - Check on-chain ETH + USDC balance
+ *   node wallet.js send <addr> <amt>     - Send USDC to another address
  *
  * Arcade Commands:
  *   node wallet.js enter <name>          - Enter arcade with your agent name
@@ -430,6 +431,75 @@ async function cmdOnchainBalance() {
   }
 }
 
+async function cmdSend(toAddress, amountStr) {
+  if (!ethers) {
+    console.log('\n  ethers.js required. Run: npm install ethers');
+    return;
+  }
+
+  const walletData = loadWallet();
+  if (!walletData) {
+    console.log('\n  No wallet found. Run: node wallet.js generate');
+    return;
+  }
+
+  if (!toAddress || !ethers.isAddress(toAddress)) {
+    console.log('\n  Invalid address. Usage: node wallet.js send <address> <amount>');
+    return;
+  }
+
+  const amount = parseFloat(amountStr);
+  if (isNaN(amount) || amount <= 0) {
+    console.log('\n  Invalid amount. Usage: node wallet.js send <address> <amount>');
+    return;
+  }
+
+  console.log(`\n  Sending $${amount} USDC to ${toAddress}...`);
+
+  try {
+    const provider = new ethers.JsonRpcProvider(CONFIG.rpc_url || 'https://mainnet.base.org');
+    const wallet = new ethers.Wallet(walletData.privateKey, provider);
+
+    // USDC contract
+    const usdcAbi = [
+      'function transfer(address to, uint256 amount) returns (bool)',
+      'function balanceOf(address) view returns (uint256)'
+    ];
+    const usdc = new ethers.Contract(CONFIG.usdc_contract, usdcAbi, wallet);
+
+    // Check balance first
+    const balance = await usdc.balanceOf(walletData.address);
+    const balanceFormatted = parseFloat(ethers.formatUnits(balance, 6));
+
+    if (balanceFormatted < amount) {
+      console.log(`  Insufficient balance: $${balanceFormatted.toFixed(2)} USDC`);
+      return;
+    }
+
+    // Send USDC
+    const amountInUnits = ethers.parseUnits(amount.toString(), 6);
+    console.log('  Sending transaction...');
+    const tx = await usdc.transfer(toAddress, amountInUnits);
+
+    console.log('  Waiting for confirmation...');
+    const receipt = await tx.wait();
+
+    console.log('\n  Transfer successful!');
+    console.log(`  Amount:     $${amount.toFixed(2)} USDC`);
+    console.log(`  To:         ${toAddress}`);
+    console.log(`  Tx:         https://basescan.org/tx/${receipt.hash}`);
+
+    // Show new balance
+    const newBalance = await usdc.balanceOf(walletData.address);
+    console.log(`  Balance:    $${ethers.formatUnits(newBalance, 6)} USDC`);
+  } catch (e) {
+    console.log('  Error:', e.message);
+    if (e.message.includes('insufficient funds')) {
+      console.log('\n  You need ETH for gas. Get some at: https://www.coinbase.com/');
+    }
+  }
+}
+
 // ============================================================================
 // Arcade Commands
 // ============================================================================
@@ -635,6 +705,10 @@ switch (cmd) {
   case 'generate': cmdGenerate(arg1); break;
   case 'balance': cmdBalance(); break;
   case 'onchain': cmdOnchainBalance(); break;
+  case 'send':
+    if (!arg1 || !arg2) console.log('\n  Usage: node wallet.js send <address> <amount>');
+    else cmdSend(arg1, arg2);
+    break;
   case 'deposit': cmdDeposit(arg1); break;
   case 'withdraw': cmdWithdraw(arg1); break;
   case 'faucet': cmdFaucet(arg1); break;
@@ -666,6 +740,7 @@ switch (cmd) {
   WALLET:
     node wallet.js generate [name]       Create new Base wallet
     node wallet.js onchain               Check on-chain ETH + USDC balance
+    node wallet.js send <addr> <amt>     Send USDC to another address
     node wallet.js balance               Check internal arcade balance (legacy)
 
   ARCADE:
