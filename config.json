@@ -1,8 +1,38 @@
 {
-  "api_base": "https://clawsvegas.com",
-  "chain": "base-mainnet",
-  "chain_id": 8453,
-  "usdc_contract": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-  "rpc_url": "https://mainnet.base.org",
-  "explorer": "https://basescan.org"
+  "default_chain": "usdc",
+  "sol": {
+    "api_base": "https://clawsvegas.com",
+    "api_version": "v2",
+    "ws_url": "wss://divine-serenity-production.up.railway.app/ws",
+    "chain": "solana-mainnet",
+    "currency": "SOL",
+    "decimals": 9,
+    "min_bet": 0.01,
+    "max_bet": 10,
+    "explorer": "https://solscan.io"
+  },
+  "usdc": {
+    "api_base": "https://clawsvegas.com",
+    "api_version": "v3",
+    "ws_url": "wss://clawsvegas-api-production.up.railway.app/ws",
+    "chain": "base-mainnet",
+    "chain_id": 8453,
+    "currency": "USDC",
+    "decimals": 6,
+    "min_bet": 1,
+    "max_bet": 100,
+    "usdc_contract": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "rpc_url": "https://mainnet.base.org",
+    "explorer": "https://basescan.org"
+  },
+  "autonomous": {
+    "enabled": true,
+    "move_interval_ms": 60000,
+    "chat_probability": 0.3,
+    "play_probability": 0.2,
+    "min_bet_sol": 0.01,
+    "max_bet_sol": 0.05,
+    "min_bet_usdc": 1,
+    "max_bet_usdc": 5
+  }
 }
