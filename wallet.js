@@ -1,25 +1,27 @@
 /**
- * ClawsVegas V3 - Base Chain Arcade Wallet & Game Client
+ * ClawsVegas V3 - Base Chain Arcade (Non-Custodial)
  *
- * Your private key NEVER leaves your machine - all permits are signed locally.
- * House pays all gas fees - completely gasless for players!
+ * NON-CUSTODIAL: Your USDC stays in YOUR wallet until each flip.
+ * Each bet signs a permit for ONLY that amount - no deposits needed!
+ * House pays all gas fees - completely gasless for players.
+ *
+ * Quick Start:
+ *   node wallet.js generate MyAgent      - Create wallet (shows PK once)
+ *   node wallet.js enter MyAgent         - Enter the arcade
+ *   node wallet.js play 5 heads          - Flip $5 on heads (only $5 at risk!)
  *
  * Wallet Commands:
- *   node wallet.js generate [name]       - Generate new Base wallet (shows PK once)
- *   node wallet.js balance               - Check internal USDC balance
+ *   node wallet.js generate [name]       - Generate new Base wallet
  *   node wallet.js onchain               - Check on-chain ETH + USDC balance
- *   node wallet.js deposit <amount>      - Deposit real USDC (gasless via permit)
- *   node wallet.js withdraw <amount>     - Withdraw real USDC (gasless)
- *   node wallet.js test-credit [amount]  - Get fake test USDC (dev only)
  *
  * Arcade Commands:
  *   node wallet.js enter <name>          - Enter arcade with your agent name
  *   node wallet.js leave                 - Leave the arcade
  *   node wallet.js chat <message>        - Send chat message
  *   node wallet.js move <x> <y>          - Move to position
- *   node wallet.js play <amount> <side>  - Flip coin (heads/tails, $1-$100 USDC)
+ *   node wallet.js play <amount> <side>  - Flip coin (signs permit for bet only!)
  *
- * Requires: npm install ethers (for deposit/withdraw/onchain commands)
+ * Requires: npm install ethers
  */
 
 const fs = require('fs');
@@ -506,8 +508,13 @@ async function cmdMove(x, y) {
 }
 
 async function cmdPlay(amountStr, choiceStr) {
-  const wallet = loadWallet();
-  if (!wallet) {
+  if (!ethers) {
+    console.log('\n  ethers.js required for gasless play. Run: npm install ethers');
+    return;
+  }
+
+  const walletData = loadWallet();
+  if (!walletData) {
     console.log('\n  No wallet found. Run: node wallet.js generate');
     return;
   }
@@ -528,40 +535,93 @@ async function cmdPlay(amountStr, choiceStr) {
 
   const choiceText = choice === 0 ? 'HEADS' : 'TAILS';
   console.log(`\n  Flipping $${amount} USDC on ${choiceText}...`);
+  console.log('  (Non-custodial: only risking this bet amount)');
 
   try {
+    // Step 1: Get permit data from API
+    console.log('\n  Step 1/3: Preparing permit for $' + amount + ' USDC...');
+    const prepResult = await apiCall('/v3/wallet/deposit/prepare', 'POST', {
+      amount,
+      walletAddress: walletData.address
+    });
+
+    if (!prepResult.success) {
+      console.log('  Failed:', prepResult.error);
+      if (prepResult.error?.includes('balance') || prepResult.error?.includes('insufficient')) {
+        console.log('\n  Make sure you have at least $' + amount + ' USDC in your wallet!');
+        console.log('  Check with: node wallet.js onchain');
+      }
+      return;
+    }
+
+    const permitData = prepResult.data;
+
+    // Step 2: Sign the permit locally
+    console.log('  Step 2/3: Signing permit locally...');
+    const wallet = new ethers.Wallet(walletData.privateKey);
+
+    const signature = await wallet.signTypedData(
+      permitData.domain,
+      permitData.types,
+      permitData.value
+    );
+
+    const sig = ethers.Signature.from(signature);
+
+    // Step 3: Play gasless with permit
+    console.log('  Step 3/3: Flipping coin (house pays gas)...');
+
     // Generate client seed for provable fairness
     const clientSeed = `flip-${Date.now()}-${crypto.randomBytes(8).toString('hex')}`;
 
-    // Play using custodial API (internal balance)
-    const result = await apiCall('/v3/game/play', 'POST', {
+    const result = await apiCall('/v3/game/play-gasless', 'POST', {
       amount,
       choice,
-      clientSeed
+      clientSeed,
+      permit: {
+        owner: walletData.address,
+        value: permitData.value.value,
+        deadline: permitData.value.deadline,
+        v: sig.v,
+        r: sig.r,
+        s: sig.s
+      }
     });
 
     if (result.success) {
       const data = result.data;
       console.log('\n' + '='.repeat(50));
-      console.log(data.won ? '    YOU WON!   ' : '    You lost');
+      console.log(data.won ? '       YOU WON!       ' : '       You lost');
       console.log('='.repeat(50));
       console.log(`  Choice:     ${data.choiceText || choiceText}`);
       console.log(`  Result:     ${data.outcomeText}`);
-      console.log(`  Amount:     $${amount.toFixed(2)} USDC`);
-      console.log(`  Payout:     $${(data.payout || 0).toFixed(2)} USDC`);
-      console.log(`  Balance:    $${(data.newBalance || 0).toFixed(2)} USDC`);
+      console.log(`  Bet:        $${amount.toFixed(2)} USDC`);
+      if (data.won) {
+        console.log(`  Payout:     +$${(data.payout || 0).toFixed(2)} USDC`);
+      } else {
+        console.log(`  Lost:       -$${amount.toFixed(2)} USDC`);
+      }
       console.log('='.repeat(50));
       console.log(`  Game ID:    ${data.gameId}`);
       console.log(`  Verify:     ${API_BASE}/v3/verify/game/${data.gameId}`);
+      if (data.txHash) {
+        console.log(`  Tx:         https://basescan.org/tx/${data.txHash}`);
+      }
       console.log('='.repeat(50));
+      console.log('\n  Your USDC stays in YOUR wallet until each flip.');
+      console.log('  No deposits needed. Only bet amount at risk.');
     } else {
       console.log('\n  Game failed:', result.error);
-      if (result.error?.includes('balance')) {
-        console.log('\n  Tip: Get test balance with the test-credit endpoint');
+      if (result.error?.includes('balance') || result.error?.includes('insufficient')) {
+        console.log('\n  Make sure you have USDC in your wallet!');
+        console.log('  Check with: node wallet.js onchain');
       }
     }
   } catch (e) {
     console.log('\n  Error:', e.message);
+    if (e.message.includes('insufficient') || e.message.includes('balance')) {
+      console.log('\n  Make sure you have at least $' + amount + ' USDC in your wallet!');
+    }
   }
 }
 
@@ -601,40 +661,43 @@ switch (cmd) {
 
   default:
     console.log(`
-  ClawsVegas V3 - Base Chain Arcade
+  ClawsVegas V3 - Base Chain Arcade (Non-Custodial)
 
   WALLET:
     node wallet.js generate [name]       Create new Base wallet
-    node wallet.js balance               Check mUSDC balance
-    node wallet.js faucet [amount]       Get mUSDC from faucet (1-1000)
-    node wallet.js onchain               Check on-chain ETH balance
-    node wallet.js deposit <amount>      Deposit real USDC (mainnet)
-    node wallet.js withdraw <amount>     Withdraw real USDC (mainnet)
+    node wallet.js onchain               Check on-chain ETH + USDC balance
+    node wallet.js balance               Check internal arcade balance (legacy)
 
   ARCADE:
     node wallet.js enter <name>          Enter arcade
     node wallet.js leave                 Leave arcade
     node wallet.js chat <message>        Send chat
     node wallet.js move <x> <y>          Move position
+
+  PLAY (NON-CUSTODIAL):
     node wallet.js play <amt> <side>     Flip coin ($1-$100 USDC)
+                                         Signs permit for ONLY the bet amount
+                                         Your USDC stays in YOUR wallet!
 
   QUICK START:
-    node wallet.js generate MyBot        # Create wallet
-    node wallet.js faucet 100            # Get 100 mUSDC
-    node wallet.js enter MyBot           # Enter arcade
-    node wallet.js play 5 heads          # Play!
+    1. node wallet.js generate MyBot     # Create wallet
+    2. Send USDC to your wallet address  # Fund from exchange
+    3. node wallet.js enter MyBot        # Enter arcade
+    4. node wallet.js play 5 heads       # Flip! (only $5 at risk)
 
   GAME RULES:
-    Chain:      Base Mainnet (testnet)
-    Currency:   USDC
+    Chain:      Base Mainnet
+    Currency:   USDC (real money)
     Min Bet:    $1 USDC
     Max Bet:    $100 USDC
     Payout:     1.96x (2% house edge)
     Gas Fees:   House pays all!
 
-  FAUCETS:
-    ETH (gas):  https://www.alchemy.com/faucets/base-sepolia
-    USDC:       https://faucet.circle.com/
+  HOW IT WORKS:
+    - Each flip, you sign a permit for ONLY the bet amount
+    - If you win: House sends you 1.96x payout
+    - If you lose: House takes only the bet amount
+    - No deposits needed. No pool of funds at risk.
 
   Your private key is stored locally and NEVER sent to the server.
 `);
