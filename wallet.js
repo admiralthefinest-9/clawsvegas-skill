@@ -22,6 +22,14 @@ try {
   ethers = require('ethers');
 } catch (e) {}
 
+// Try to load Solana SDK for non-custodial SOL play
+let solanaWeb3, bs58;
+try {
+  solanaWeb3 = require('@solana/web3.js');
+  const bs58Module = require('bs58');
+  bs58 = bs58Module.default || bs58Module;
+} catch (e) {}
+
 // Paths
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const WALLET_PATH = path.join(__dirname, 'wallet.json');
@@ -202,14 +210,39 @@ async function cmdBalance(chainArg) {
   }
 
   if (!chainArg || chainArg === 'sol') {
+    console.log(`\n  SOL (Solana):`);
+    console.log(`    Address: ${wallet.solana?.address || 'N/A'}`);
+    
+    // Check on-chain SOL balance
+    if (wallet.solana?.address) {
+      try {
+        const rpcUrl = CONFIG.sol?.rpc_url || 'https://api.mainnet-beta.solana.com';
+        const response = await fetch(rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getBalance',
+            params: [wallet.solana.address]
+          })
+        });
+        const result = await response.json();
+        const lamports = result.result?.value || 0;
+        const sol = lamports / 1000000000;
+        console.log(`    SOL:     ${sol.toFixed(4)} (on-chain, playable)`);
+      } catch (e) {
+        console.log(`    On-chain error: ${e.message}`);
+      }
+    }
+    
+    // Also show internal arcade balance
     try {
       const result = await apiCall('sol', '/wallet/balance');
-      console.log(`\n  SOL (Solana):`);
-      console.log(`    Address: ${wallet.solana?.address || 'N/A'}`);
-      console.log(`    Balance: ${result.data?.balance?.toFixed(4) || '0.0000'} SOL`);
-    } catch (e) {
-      console.log(`    Error: ${e.message}`);
-    }
+      if (result.data?.balance > 0) {
+        console.log(`    Arcade:  ${result.data?.balance?.toFixed(4) || '0.0000'} (internal)`);
+      }
+    } catch (e) {}
   }
 }
 
@@ -368,9 +401,52 @@ async function cmdPlay(amountStr, chainOrChoice, choiceOrNull) {
 
       printResult(result, currency);
     } else {
-      // SOL play
-      const result = await apiCall('sol', '/game/play', 'POST', {
-        amount, choice, clientSeed
+      // SOL non-custodial play
+      if (!solanaWeb3 || !bs58) {
+        console.log('  @solana/web3.js required for SOL. Run: npm install @solana/web3.js bs58');
+        return;
+      }
+
+      // Get house wallet
+      const infoResult = await apiCall('sol', '/wallet/info');
+      if (!infoResult.success || !infoResult.data?.houseWallet) {
+        console.log('  Failed to get house wallet');
+        return;
+      }
+      const houseWallet = infoResult.data.houseWallet;
+
+      // Create connection
+      const rpcUrl = CONFIG.sol?.rpc_url || 'https://api.mainnet-beta.solana.com';
+      const connection = new solanaWeb3.Connection(rpcUrl, 'confirmed');
+
+      // Create keypair from private key
+      const privateKeyBytes = bs58.decode(wallet.solana.privateKey);
+      const keypair = solanaWeb3.Keypair.fromSecretKey(privateKeyBytes);
+
+      // Create transfer transaction
+      const lamports = Math.floor(amount * solanaWeb3.LAMPORTS_PER_SOL);
+      const transaction = new solanaWeb3.Transaction().add(
+        solanaWeb3.SystemProgram.transfer({
+          fromPubkey: keypair.publicKey,
+          toPubkey: new solanaWeb3.PublicKey(houseWallet),
+          lamports: lamports
+        })
+      );
+
+      // Get recent blockhash
+      const { blockhash } = await connection.getLatestBlockhash();
+      transaction.recentBlockhash = blockhash;
+      transaction.feePayer = keypair.publicKey;
+
+      // Sign transaction
+      transaction.sign(keypair);
+
+      // Serialize and encode
+      const signedTx = transaction.serialize().toString('base64');
+
+      // Play via non-custodial endpoint
+      const result = await apiCall('sol', '/game/play-onchain', 'POST', {
+        signedTx, choice, clientSeed
       });
 
       printResult(result, currency);
